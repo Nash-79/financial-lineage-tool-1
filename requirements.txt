@@ -1,0 +1,55 @@
+# Azure SDKs
+azure-cosmos>=4.5.0
+azure-search-documents>=11.4.0
+azure-storage-blob>=12.19.0
+azure-identity>=1.15.0
+openai>=1.12.0
+
+# Web Framework
+fastapi>=0.109.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.5.0
+pydantic-settings>=2.1.0
+
+# Code Parsing
+sqlglot>=20.0.0
+tree-sitter>=0.20.0
+tree-sitter-python>=0.20.0
+tree-sitter-sql>=0.0.1
+libcst>=1.1.0
+ast-grep>=0.14.0
+
+# Graph Database
+gremlinpython>=3.7.0
+networkx>=3.2.0
+
+# Embeddings & ML
+tiktoken>=0.5.0
+numpy>=1.26.0
+scikit-learn>=1.4.0
+
+# Git Operations
+gitpython>=3.1.40
+pygithub>=2.1.0
+
+# Async Support
+aiohttp>=3.9.0
+aiofiles>=23.2.0
+httpx>=0.26.0
+
+# Utilities
+python-dotenv>=1.0.0
+pyyaml>=6.0.0
+tenacity>=8.2.0
+structlog>=24.1.0
+watchdog>=3.0.0
+
+# Testing
+pytest>=7.4.0
+pytest-asyncio>=0.23.0
+pytest-cov>=4.1.0
+
+# Development
+black>=24.1.0
+ruff>=0.1.0
+mypy>=1.8.0
