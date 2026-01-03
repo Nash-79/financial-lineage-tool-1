@@ -9,7 +9,7 @@ import json
 import logging
 import uuid
 from datetime import datetime
-from typing import Any, Optional
+from typing import Any, List, Optional
 
 from .duckdb_client import get_duckdb_client
 
@@ -232,6 +232,141 @@ class ProjectStore:
             (project_id,)
         )
         return result is not None
+
+    def get_context(self, project_id: str) -> Optional[dict]:
+        """
+        Get project context by ID.
+
+        Args:
+            project_id: Project ID
+
+        Returns:
+            Context dict or None if project not found or no context set
+        """
+        client = get_duckdb_client()
+
+        result = client.fetchone(
+            """
+            SELECT context, context_file_path
+            FROM projects
+            WHERE id = ?
+            """,
+            (project_id,)
+        )
+
+        if not result:
+            return None
+
+        context_json = result[0]
+        context_file_path = result[1]
+
+        # Parse JSON if present
+        if context_json:
+            if isinstance(context_json, str):
+                context = json.loads(context_json)
+            else:
+                context = context_json
+        else:
+            # Return default empty context structure
+            context = {
+                "description": "",
+                "format": "text",
+                "source_entities": [],
+                "target_entities": [],
+                "related_projects": [],
+                "domain_hints": [],
+                "file_name": None,
+                "updated_at": None
+            }
+
+        # Include file path if present
+        if context_file_path:
+            context["file_name"] = context_file_path
+
+        return context
+
+    async def update_context(
+        self,
+        project_id: str,
+        context: dict,
+        context_file_path: Optional[str] = None
+    ) -> Optional[dict]:
+        """
+        Update project context.
+
+        Args:
+            project_id: Project ID
+            context: Context dict with description, source_entities, etc.
+            context_file_path: Optional path to uploaded context file
+
+        Returns:
+            Updated context dict or None if project not found
+
+        Raises:
+            ValueError: If context contains circular project references
+        """
+        client = get_duckdb_client()
+
+        # Check project exists
+        if not self.exists(project_id):
+            return None
+
+        # Validate no self-reference in related_projects
+        related_projects = context.get("related_projects", [])
+        if project_id in related_projects:
+            raise ValueError(
+                f"Project {project_id} cannot reference itself in related_projects"
+            )
+
+        # Add timestamp
+        context["updated_at"] = datetime.utcnow().isoformat()
+
+        # Serialize context to JSON string
+        context_json = json.dumps(context)
+
+        # Update database
+        await client.execute_write(
+            """
+            UPDATE projects
+            SET context = ?,
+                context_file_path = ?,
+                updated_at = current_timestamp
+            WHERE id = ?
+            """,
+            (context_json, context_file_path, project_id)
+        )
+
+        logger.info(f"Updated context for project: {project_id}")
+        return self.get_context(project_id)
+
+    def validate_context_schema(self, context: dict) -> List[str]:
+        """
+        Validate context structure.
+
+        Args:
+            context: Context dict to validate
+
+        Returns:
+            List of validation errors (empty if valid)
+        """
+        errors = []
+
+        # Check required field types
+        if "description" in context and not isinstance(context["description"], str):
+            errors.append("description must be a string")
+
+        if "format" in context:
+            if context["format"] not in ("text", "markdown"):
+                errors.append("format must be 'text' or 'markdown'")
+
+        for field in ["source_entities", "target_entities", "related_projects", "domain_hints"]:
+            if field in context:
+                if not isinstance(context[field], list):
+                    errors.append(f"{field} must be an array")
+                elif not all(isinstance(item, str) for item in context[field]):
+                    errors.append(f"{field} must contain only strings")
+
+        return errors
 
 
 class RepositoryStore:

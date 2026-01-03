@@ -84,6 +84,14 @@ async def get_lineage_nodes(
     if not state.graph:
         raise HTTPException(status_code=503, detail="Graph not initialized")
 
+    # Validate type parameter before try block
+    if type:
+        if not isinstance(type, str) or type.isdigit():
+            raise HTTPException(
+                status_code=422,
+                detail="Type parameter must be a valid node label (e.g., 'Table', 'Column', 'View')",
+            )
+
     try:
         # Build query
         where_clauses = []

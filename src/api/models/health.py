@@ -12,6 +12,7 @@ class HealthResponse(BaseModel):
 
     status: str
     services: Dict[str, Any]
+    database: Dict[str, Any] | None = None
     timestamp: str
 
 

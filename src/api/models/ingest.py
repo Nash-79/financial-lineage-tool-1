@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import Optional
 from pydantic import BaseModel, Field
 
 
@@ -10,6 +11,10 @@ class IngestRequest(BaseModel):
 
     file_path: str = Field(..., description="Path to file or directory")
     file_type: str = Field(default="sql", description="File type (sql, python)")
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Project ID for context injection into LLM prompts"
+    )
 
 
 class SqlIngestRequest(BaseModel):
@@ -25,3 +30,18 @@ class SqlIngestRequest(BaseModel):
         default="manual_ingest",
         description="The original file name or source of the SQL.",
     )
+    project_id: Optional[str] = Field(
+        default=None,
+        description="Project ID for context injection into LLM prompts"
+    )
+
+
+class SqlIngestResponse(BaseModel):
+    """Response model for SQL content ingestion."""
+    status: str
+    source: str
+    context_applied: bool = Field(
+        default=False,
+        description="Whether project context was successfully injected into the LLM prompt"
+    )
+

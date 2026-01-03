@@ -8,6 +8,7 @@ openai>=1.12.0
 # Web Framework
 fastapi>=0.109.0
 uvicorn[standard]>=0.27.0
+python-multipart>=0.0.9
 pydantic>=2.5.0
 pydantic-settings>=2.1.0
 
@@ -17,7 +18,7 @@ tree-sitter>=0.20.0
 tree-sitter-python>=0.20.0
 tree-sitter-sql>=0.0.1
 libcst>=1.1.0
-ast-grep>=0.14.0
+
 
 # Graph Database
 gremlinpython>=3.7.0

@@ -5,16 +5,19 @@ Provides endpoints for uploading files with project scoping.
 """
 
 import logging
+import json
 import os
 import re
-import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
 
+from src.storage import ArtifactManager
 from src.storage.metadata_store import ProjectStore, RepositoryStore
+from src.storage.upload_settings import UploadSettingsStore
 from ..config import config
 
 logger = logging.getLogger(__name__)
@@ -24,9 +27,16 @@ router = APIRouter(prefix="/api/v1/files", tags=["files"])
 # Store instances
 project_store = ProjectStore()
 repository_store = RepositoryStore()
+artifact_manager = ArtifactManager(base_path="data")
 
 # Maximum file size (50MB by default)
 MAX_FILE_SIZE = config.UPLOAD_MAX_FILE_SIZE_MB * 1024 * 1024
+
+
+class UploadConfigUpdate(BaseModel):
+    """Request model for updating upload configuration."""
+    allowed_extensions: Optional[List[str]] = None
+    max_file_size_mb: Optional[int] = None
 
 
 def get_allowed_extensions() -> set:
@@ -82,7 +92,7 @@ async def upload_files(
     """
     Upload files for ingestion with project scoping.
 
-    Files are validated, sanitized, and saved to the upload directory.
+    Files are validated, sanitized, and saved to hierarchical run directory.
     Then they are processed for lineage extraction and tagged with
     project_id and repository_id.
 
@@ -93,10 +103,11 @@ async def upload_files(
         repository_name: Name for new repository (required if repository_id not provided)
 
     Returns:
-        Dictionary with upload results for each file
+        Dictionary with upload results for each file including run_id
     """
     # Validate project exists
-    if not project_store.exists(project_id):
+    project = project_store.get(project_id)
+    if not project:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
 
     # Get or create repository
@@ -125,15 +136,23 @@ async def upload_files(
         repository_id = repo["id"]
         logger.info(f"Created repository {repository_id} for upload")
 
-    # Ensure upload directory exists
-    upload_dir = Path(config.UPLOAD_BASE_DIR)
-    upload_dir.mkdir(parents=True, exist_ok=True)
+    # Create ingestion run for this upload batch
+    action_name = repository_name or repo["name"] or "file_upload"
+    run_context = await artifact_manager.create_run(
+        project_id=project_id,
+        project_name=project["name"],
+        action=f"upload_{action_name}"
+    )
+
+    # Get raw_source directory for this run
+    raw_source_dir = run_context.get_artifact_dir("raw_source")
 
     # Process each file
     results = []
     total_nodes_created = 0
     files_processed = 0
     files_failed = 0
+    files_skipped_duplicate = 0
 
     for upload_file in files:
         file_result = {
@@ -164,18 +183,36 @@ async def upload_files(
                 results.append(file_result)
                 continue
 
-            # Sanitize filename and create unique path
+            # Sanitize filename - keep original name for versioning
             safe_filename = sanitize_filename(upload_file.filename)
-            timestamp = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
-            unique_filename = f"{timestamp}_{uuid.uuid4().hex[:8]}_{safe_filename}"
-            file_path = upload_dir / unique_filename
+            file_path = raw_source_dir / safe_filename
 
-            # Save file
+            # Save file to run directory
             with open(file_path, "wb") as f:
                 f.write(content)
 
             file_result["saved_path"] = str(file_path)
             logger.info(f"Saved uploaded file: {file_path}")
+
+            # Register file with content hashing and deduplication
+            registration = await artifact_manager.register_file(
+                project_id=project_id,
+                run_id=run_context.run_id,
+                filename=safe_filename,
+                file_path=file_path
+            )
+
+            file_result["file_hash"] = registration["file_hash"]
+            file_result["file_status"] = registration["status"]
+
+            # Check if this is a duplicate (same content)
+            if registration["skip_processing"]:
+                logger.info(f"Skipping processing for duplicate file: {safe_filename}")
+                file_result["status"] = "skipped_duplicate"
+                file_result["message"] = registration["message"]
+                files_skipped_duplicate += 1
+                results.append(file_result)
+                continue
 
             # Process file for lineage extraction
             state = get_app_state()
@@ -205,6 +242,10 @@ async def upload_files(
                 except Exception as e:
                     logger.warning(f"Failed to extract lineage from {upload_file.filename}: {e}")
 
+            # Mark file as processed in artifact manager
+            if registration.get("file_id"):
+                await artifact_manager.mark_file_processed(registration["file_id"])
+
             file_result["status"] = "processed"
             file_result["nodes_created"] = nodes_created
             total_nodes_created += nodes_created
@@ -228,11 +269,22 @@ async def upload_files(
     except Exception as e:
         logger.warning(f"Failed to update repository counts: {e}")
 
+    # Mark run as completed
+    run_status = "completed" if files_failed == 0 else "completed_with_errors"
+    await artifact_manager.complete_run(
+        run_id=run_context.run_id,
+        status=run_status,
+        error_message=f"{files_failed} files failed" if files_failed > 0 else None
+    )
+
     return {
         "project_id": project_id,
         "repository_id": repository_id,
+        "run_id": run_context.run_id,
+        "run_dir": str(run_context.run_dir),
         "files_processed": files_processed,
         "files_failed": files_failed,
+        "files_skipped_duplicate": files_skipped_duplicate,
         "total_nodes_created": total_nodes_created,
         "results": results,
     }
@@ -246,53 +298,95 @@ async def get_upload_config() -> Dict[str, Any]:
     Returns current settings for allowed file extensions and size limits.
     Frontend can use this to display/validate before upload.
     """
-    return {
-        "allowed_extensions": list(get_allowed_extensions()),
-        "max_file_size_mb": config.UPLOAD_MAX_FILE_SIZE_MB,
-        "max_file_size_bytes": MAX_FILE_SIZE,
-        "upload_directory": config.UPLOAD_BASE_DIR,
-    }
+    # Try to load settings from database
+    settings_store = UploadSettingsStore()
+    db_settings = settings_store.get_settings()
+    
+    if db_settings:
+        # Settings loaded from database
+        extensions = json.loads(db_settings["allowed_extensions"])
+        return {
+            "allowed_extensions": extensions,
+            "max_file_size_mb": db_settings["max_file_size_mb"],
+            "max_file_size_bytes": db_settings["max_file_size_mb"] * 1024 * 1024,
+            "upload_directory": config.UPLOAD_BASE_DIR,
+            "persisted": True,
+            "last_updated": db_settings["updated_at"],
+            "source": "database",
+        }
+    else:
+        # Fallback to config (environment variables)
+        return {
+            "allowed_extensions": list(get_allowed_extensions()),
+            "max_file_size_mb": config.UPLOAD_MAX_FILE_SIZE_MB,
+            "max_file_size_bytes": MAX_FILE_SIZE,
+            "upload_directory": config.UPLOAD_BASE_DIR,
+            "persisted": False,
+            "last_updated": None,
+            "source": "environment",
+        }
 
 
 @router.put("/config")
 async def update_upload_config(
-    allowed_extensions: Optional[List[str]] = None,
-    max_file_size_mb: Optional[int] = None,
+    config_update: UploadConfigUpdate,
 ) -> Dict[str, Any]:
     """
     Update file upload configuration.
 
-    Note: Changes are runtime-only and will reset on server restart.
-    For persistent changes, update environment variables.
+    Settings are persisted to database and survive server restarts.
 
     Args:
-        allowed_extensions: List of file extensions (e.g., [".sql", ".py"])
-        max_file_size_mb: Maximum file size in MB
+        config_update: Upload configuration updates (allowed_extensions, max_file_size_mb)
 
     Returns:
-        Updated configuration
+        Updated configuration with persistence confirmation
     """
     global MAX_FILE_SIZE
 
-    if allowed_extensions is not None:
-        # Validate extensions start with dot
+    # Get current settings
+    current_extensions = list(get_allowed_extensions())
+    current_size = config.UPLOAD_MAX_FILE_SIZE_MB
+
+    # Validate and update extensions
+    if config_update.allowed_extensions is not None:
+        allowed_extensions = config_update.allowed_extensions
         validated = []
         for ext in allowed_extensions:
             ext = ext.strip().lower()
             if not ext.startswith("."):
                 ext = "." + ext
             validated.append(ext)
+        current_extensions = validated
         config.ALLOWED_FILE_EXTENSIONS = validated
         logger.info(f"Updated allowed extensions: {validated}")
 
-    if max_file_size_mb is not None:
+    # Validate and update file size
+    if config_update.max_file_size_mb is not None:
+        max_file_size_mb = config_update.max_file_size_mb
         if max_file_size_mb < 1 or max_file_size_mb > 500:
             raise HTTPException(
                 status_code=400,
                 detail="max_file_size_mb must be between 1 and 500"
             )
+        current_size = max_file_size_mb
         config.UPLOAD_MAX_FILE_SIZE_MB = max_file_size_mb
         MAX_FILE_SIZE = max_file_size_mb * 1024 * 1024
         logger.info(f"Updated max file size: {max_file_size_mb}MB")
+
+    # Persist to database
+    settings_store = UploadSettingsStore()
+    success = await settings_store.save_settings(
+        allowed_extensions=current_extensions,
+        max_file_size_mb=current_size,
+        updated_by="api"
+    )
+
+    if not success:
+        logger.error("Failed to persist upload settings to database")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to persist settings to database"
+        )
 
     return await get_upload_config()

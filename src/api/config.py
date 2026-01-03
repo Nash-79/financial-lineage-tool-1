@@ -61,6 +61,12 @@ class LocalConfig:
         "ALLOWED_FILE_EXTENSIONS",
         ".sql,.ddl,.csv,.json,.py,.ipynb"
     ).split(",")
+    
+    # WebSocket configuration
+    WEBSOCKET_URL = os.getenv(
+        "WEBSOCKET_URL",
+        "ws://127.0.0.1:8000/admin/ws/dashboard"
+    )
 
     # GitHub OAuth settings
     GITHUB_CLIENT_ID = os.getenv("GITHUB_CLIENT_ID", "")

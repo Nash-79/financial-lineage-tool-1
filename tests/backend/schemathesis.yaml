@@ -1,0 +1,27 @@
+# Schemathesis Configuration for Backend Contract Testing
+# This file configures automated API validation against OpenAPI spec
+
+# Test execution settings
+checks:
+  - not_a_server_error  # Ensure no 5xx errors
+  - status_code_conformance  # Verify status codes match spec
+  - content_type_conformance  # Verify content types match spec
+  - response_schema_conformance  # Verify response bodies match schemas
+  - response_headers_conformance  # Verify response headers match spec
+
+# Hypothesis settings for property-based testing
+hypothesis:
+  max_examples: 50  # Number of test cases per endpoint
+  derandomize: true  # Reproducible test runs
+  deadline: 10000  # 10 second timeout per test case
+
+# Execution settings
+workers: 4  # Parallel test execution
+exit_first: false  # Continue testing even after failures
+
+# Reporting
+verbosity: 1  # 0=quiet, 1=normal, 2=verbose
+
+# Target configuration
+# Note: Base URL is passed via command line
+# Example: schemathesis run http://localhost:8000/openapi.json --config tests/backend/schemathesis.yaml

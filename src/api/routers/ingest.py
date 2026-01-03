@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any, Dict
 from fastapi import APIRouter, BackgroundTasks, HTTPException
 
 from ..config import config
-from ..models.ingest import IngestRequest, SqlIngestRequest
+from ..models.ingest import IngestRequest, SqlIngestRequest, SqlIngestResponse
 
 if TYPE_CHECKING:
     pass
@@ -28,8 +28,8 @@ def get_app_state() -> Any:
     return state
 
 
-@router.post("/sql")
-async def ingest_sql(request: SqlIngestRequest) -> Dict[str, str]:
+@router.post("/sql", response_model=SqlIngestResponse)
+async def ingest_sql(request: SqlIngestRequest) -> SqlIngestResponse:
     """Parse and ingest raw SQL string into the knowledge graph.
 
     Processes SQL content to extract lineage information and stores it
@@ -44,10 +44,28 @@ async def ingest_sql(request: SqlIngestRequest) -> Dict[str, str]:
     Raises:
         HTTPException: If graph extractor is not initialized or ingestion fails.
     """
+    import logging
+    from src.llm.context_builder import build_context_block
+
+    logger = logging.getLogger(__name__)
     state = get_app_state()
 
     if not state.extractor:
         raise HTTPException(status_code=503, detail="Graph Extractor not initialized")
+
+    # Build project context if project_id provided
+    context_block = ""
+    if request.project_id:
+        try:
+            context_block = build_context_block(request.project_id)
+            if context_block:
+                logger.info(f"Project context loaded for {request.project_id}")
+                print(f"[Context] Using project context:\n{context_block}")
+        except Exception as e:
+            logger.error(f"Failed to build project context: {e}")
+            print(f"[Context] Error building context: {e}")
+            # Continue ingestion without context
+
 
     try:
         state.extractor.ingest_sql_lineage(
@@ -55,12 +73,24 @@ async def ingest_sql(request: SqlIngestRequest) -> Dict[str, str]:
             dialect=request.dialect,
             source_file=request.source_file,
         )
-        return {"status": "success", "source": request.source_file}
+        return SqlIngestResponse(
+            status="success",
+            source=request.source_file,
+            context_applied=bool(context_block)
+        )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to ingest SQL: {e}")
 
 
-@router.post("")
+
+@router.post(
+    "",
+    responses={
+        200: {"description": "File accepted for ingestion"},
+        404: {"description": "File not found at specified path"},
+        422: {"description": "Validation error"},
+    },
+)
 async def ingest_file(
     request: IngestRequest, background_tasks: BackgroundTasks
 ) -> Dict[str, str]:
@@ -78,7 +108,7 @@ async def ingest_file(
         Dictionary with acceptance status and file path.
 
     Raises:
-        HTTPException: If file is not found.
+        HTTPException: If file is not found (404).
     """
     state = get_app_state()
 

@@ -78,7 +78,7 @@ services:
     volumes:
       - ./src:/app/src:ro
       - ./config:/app/config:ro
-      - ./data:/app/data
+      - ./data:/app/data:rw
       - ./logs:/app/logs
     depends_on:
       qdrant:

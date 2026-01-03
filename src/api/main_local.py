@@ -86,6 +86,19 @@ async def lifespan(app: FastAPI):
         # Ensure default project exists for backward compatibility
         await ensure_default_project()
         print("[+] Default project ready")
+
+        # Load upload settings from database
+        print("[*] Loading upload settings from database...")
+        from src.storage.upload_settings import UploadSettingsStore
+        settings_store = UploadSettingsStore()
+        settings = await settings_store.get_or_create_default()
+
+        # Override config with database settings
+        import json
+        config.ALLOWED_FILE_EXTENSIONS = json.loads(settings["allowed_extensions"])
+        config.UPLOAD_MAX_FILE_SIZE_MB = settings["max_file_size_mb"]
+        print(f"[+] Upload settings loaded: extensions={config.ALLOWED_FILE_EXTENSIONS}, max_size={config.UPLOAD_MAX_FILE_SIZE_MB}MB")
+        
     except Exception as e:
         print(f"[!] WARNING: Failed to initialize DuckDB: {e}")
         print("[!] Metadata storage will not be available")

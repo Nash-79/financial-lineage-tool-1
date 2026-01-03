@@ -10,15 +10,28 @@ import httpx
 from dotenv import load_dotenv
 
 from src.knowledge_graph.neo4j_client import Neo4jGraphClient
+from src.storage.artifact_manager import ArtifactManager
 
 load_dotenv()
 
 # --- Graph Exports ---
 
 
-def export_graph_to_json(output_file: str = "data/graph_export.json") -> Dict[str, Any]:
+def export_graph_to_json(
+    output_file: str = "data/graph_export.json",
+    run_id: str = None,
+    project_id: str = None
+) -> Dict[str, Any]:
     """
     Export the entire Neo4j graph to JSON format.
+    
+    Args:
+        output_file: Output file path (used if run_id not provided)
+        run_id: Optional run ID to save export in run's graph_export directory
+        project_id: Optional project ID (required if run_id provided)
+    
+    Returns:
+        Dictionary containing the exported graph data
     """
     print("[*] Connecting to Neo4j...")
     client = Neo4jGraphClient(
@@ -72,11 +85,22 @@ def export_graph_to_json(output_file: str = "data/graph_export.json") -> Dict[st
                 "export_timestamp": datetime.utcnow().isoformat(),
                 "database": os.getenv("NEO4J_DATABASE", "neo4j"),
                 "statistics": stats,
+                "run_id": run_id,
+                "project_id": project_id,
             },
             "nodes": nodes,
             "relationships": relationships,
         }
 
+        # Determine output path
+        if run_id:
+            artifact_manager = ArtifactManager()
+            export_dir = artifact_manager.get_artifact_path(run_id, "graph_export")
+            if export_dir:
+                output_file = str(export_dir / "graph_export.json")
+            else:
+                print(f"[!] Warning: Could not resolve run directory for run_id={run_id}, using default path")
+        
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         print(f"[*] Writing to {output_file}...")
         with open(output_file, "w", encoding="utf-8") as f:
@@ -90,9 +114,19 @@ def export_graph_to_json(output_file: str = "data/graph_export.json") -> Dict[st
 
 def export_graph_for_visualization(
     output_file: str = "data/graph_viz.json",
+    run_id: str = None,
+    project_id: str = None
 ) -> Dict[str, Any]:
     """
     Export graph in a format optimized for D3.js.
+    
+    Args:
+        output_file: Output file path (used if run_id not provided)
+        run_id: Optional run ID to save export in run's graph_export directory
+        project_id: Optional project ID (required if run_id provided)
+    
+    Returns:
+        Dictionary containing the visualization data
     """
     print("[*] Connecting to Neo4j...")
     client = Neo4jGraphClient(
@@ -142,8 +176,25 @@ def export_graph_for_visualization(
                     }
                 )
 
-        viz_export = {"nodes": viz_nodes, "links": viz_links}
+        viz_export = {
+            "nodes": viz_nodes,
+            "links": viz_links,
+            "metadata": {
+                "run_id": run_id,
+                "project_id": project_id,
+                "export_timestamp": datetime.utcnow().isoformat(),
+            }
+        }
 
+        # Determine output path
+        if run_id:
+            artifact_manager = ArtifactManager()
+            export_dir = artifact_manager.get_artifact_path(run_id, "graph_export")
+            if export_dir:
+                output_file = str(export_dir / "graph_viz.json")
+            else:
+                print(f"[!] Warning: Could not resolve run directory for run_id={run_id}, using default path")
+        
         os.makedirs(os.path.dirname(output_file), exist_ok=True)
         print(f"[*] Writing to {output_file}...")
         with open(output_file, "w", encoding="utf-8") as f:

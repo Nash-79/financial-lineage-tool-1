@@ -41,8 +41,13 @@ class CodeParser:
                 "views": set(),
             }
 
+            # Define write AST types robustly (CreateTable might not exist in newer sqlglot)
+            write_types = (exp.Insert, exp.Update, exp.Create)
+            if hasattr(exp, "CreateTable"):
+                write_types += (exp.CreateTable,)
+
             # Find write table/view
-            if isinstance(ast, (exp.CreateTable, exp.Insert, exp.Update, exp.Create)):
+            if isinstance(ast, write_types):
                 kind = ast.args.get("kind", "").upper()
                 if kind == "VIEW":
                     result["views"].add(ast.this.sql())

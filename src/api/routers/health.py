@@ -89,6 +89,24 @@ async def health_check() -> HealthResponse:
     # Add mode information
     services["rag_mode"] = "llamaindex" if config.USE_LLAMAINDEX else "legacy"
 
+    # Add database migration status
+    database_status: Dict[str, Any] = {}
+    try:
+        from ...storage.duckdb_client import get_duckdb_client
+        
+        db = get_duckdb_client()
+        migration_status = db.get_migration_status()
+        database_status = {
+            "schema_version": migration_status["current_version"],
+            "is_current": migration_status["is_current"],
+            "total_migrations": migration_status["total_migrations"],
+            "last_migration": migration_status["migrations"][-1]["applied_at"] 
+                if migration_status["migrations"] else None
+        }
+    except Exception as e:
+        # Log error but don't fail health check
+        database_status = {"error": str(e)}
+
     overall = (
         "healthy"
         if all(
@@ -102,7 +120,10 @@ async def health_check() -> HealthResponse:
     )
 
     return HealthResponse(
-        status=overall, services=services, timestamp=datetime.utcnow().isoformat()
+        status=overall, 
+        services=services, 
+        database=database_status,
+        timestamp=datetime.utcnow().isoformat()
     )
 
 

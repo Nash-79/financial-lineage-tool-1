@@ -30,8 +30,8 @@ COPY --from=builder /root/.local /root/.local
 COPY src/ ./src/
 COPY config/ ./config/
 
-# Create directories for data and logs
-RUN mkdir -p /app/data /app/logs
+# Create directories for data and logs with proper permissions
+RUN mkdir -p /app/data /app/logs && chmod 777 /app/data /app/logs
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

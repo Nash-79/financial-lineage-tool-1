@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import sys
 from datetime import datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List
 
 import httpx
@@ -19,6 +21,9 @@ if TYPE_CHECKING:
 
 router = APIRouter(prefix="/api/v1", tags=["admin"])
 admin_router = APIRouter(prefix="/admin", tags=["admin"])
+
+# Logger for admin operations
+logger = logging.getLogger(__name__)
 
 
 def get_app_state() -> Any:
@@ -319,6 +324,26 @@ async def restart_container() -> Dict[str, str]:
     return {"status": "restarting"}
 
 
+@router.get("/config/websocket")
+async def get_websocket_config() -> Dict[str, str]:
+    """Get WebSocket configuration for frontend clients.
+    
+    Returns the WebSocket URL that frontend should use to connect
+    to the dashboard. URL is configurable via WEBSOCKET_URL environment
+    variable with default: ws://127.0.0.1:8000/admin/ws/dashboard
+    
+    Returns:
+        Dictionary containing websocket_url.
+    
+    Example:
+        {
+            "websocket_url": "ws://127.0.0.1:8000/admin/ws/dashboard"
+        }
+    """
+    return {"websocket_url": config.WEBSOCKET_URL}
+
+
+
 # WebSocket Connection Manager
 class ConnectionManager:
     """Manages WebSocket connections for dashboard updates."""
@@ -369,7 +394,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-@router.websocket("/ws/dashboard")
+@admin_router.websocket("/ws/dashboard")
 async def websocket_dashboard(websocket: WebSocket):
     """WebSocket endpoint for real-time dashboard updates.
 

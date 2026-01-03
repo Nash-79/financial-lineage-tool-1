@@ -30,6 +30,276 @@ Currently, the API does not require authentication (development mode).
 | 503 | Service Unavailable - Service not initialized |
 | 500 | Internal Server Error |
 
+## Metadata Legend
+
+> **Note**: This document serves as the source of truth for automated contract testing.  
+> Each endpoint includes metadata used by Schemathesis and Playwright to generate test cases.
+
+- **Method**: HTTP verb (GET/POST/PUT/DELETE)
+- **Critical**: `@critical` tag indicates endpoint is tested in E2E smoke tests
+- **Flow**: User journey this endpoint belongs to (e.g., "Project Lifecycle", "File Ingestion", "Dashboard")
+- **Auth**: Authentication requirement (currently all endpoints are open in dev mode)
+
+
+---
+
+## Projects
+
+### List All Projects
+
+**@critical** - Used in Project Lifecycle smoke test
+
+Get all projects with repository and link counts.
+
+```http
+GET /api/v1/projects?limit=100&offset=0
+```
+
+**Query Parameters**:
+- `limit` (int, optional): Maximum results (1-1000, default: 100)
+- `offset` (int, optional): Results to skip (default: 0)
+
+**Response**: `ProjectListResponse`
+```json
+{
+  "projects": [
+    {
+      "id": "proj-123",
+      "name": "Customer Analytics",
+      "description": "Customer data pipeline",
+      "repository_count": 3,
+      "link_count": 5,
+      "created_at": "2025-12-31T20:00:00",
+      "updated_at": "2025-12-31T20:00:00"
+    }
+  ],
+  "total": 1,
+  "limit": 100,
+  "offset": 0
+}
+```
+
+### Create Project
+
+**@critical** - Used in Project Lifecycle smoke test
+
+Create a new project container for repositories.
+
+```http
+POST /api/v1/projects
+```
+
+**Request**: `ProjectCreate`
+```json
+{
+  "id": "proj-456",
+  "name": "Sales Pipeline",
+  "description": "Sales data processing"
+}
+```
+
+**Response**: `Project`
+```json
+{
+  "id": "proj-456",
+  "name": "Sales Pipeline",
+  "description": "Sales data processing",
+  "repositories": [],
+  "links": [],
+  "created_at": "2025-12-31T20:00:00",
+  "updated_at": "2025-12-31T20:00:00"
+}
+```
+
+### Get Project Details
+
+Get complete project information including repositories and links.
+
+```http
+GET /api/v1/projects/{project_id}
+```
+
+**Response**: `Project`
+```json
+{
+  "id": "proj-123",
+  "name": "Customer Analytics",
+  "description": "Customer data pipeline",
+  "repositories": [
+    {
+      "id": "repo-1",
+      "name": "customer-etl",
+      "source_type": "github",
+      "url": "https://github.com/org/customer-etl"
+    }
+  ],
+  "links": [],
+  "created_at": "2025-12-31T20:00:00",
+  "updated_at": "2025-12-31T20:00:00"
+}
+```
+
+### Update Project
+
+Update project details (name, description).
+
+```http
+PUT /api/v1/projects/{project_id}
+```
+
+**Request**: `ProjectUpdate`
+```json
+{
+  "name": "Updated Project Name",
+  "description": "Updated description"
+}
+```
+
+### Delete Project
+
+Delete project and optionally its lineage data.
+
+```http
+DELETE /api/v1/projects/{project_id}?delete_data=false
+```
+
+**Query Parameters**:
+- `delete_data` (bool, optional): If true, also delete Neo4j lineage nodes (default: false)
+
+---
+
+## Files
+
+### Upload Files
+
+**@critical** - Used in File Upload Flow smoke test
+
+Upload files for lineage ingestion with project scoping.
+
+```http
+POST /api/v1/files/upload
+```
+
+**Request**: `multipart/form-data`
+- `files` (file[], required): Files to upload (.sql, .ddl, .csv, .json)
+- `project_id` (string, required): Project ID to associate files with
+- `repository_id` (string, optional): Repository ID (creates new if omitted)
+- `repository_name` (string, optional): Repository name (required if repository_id omitted)
+
+**Response**: `UploadResponse`
+```json
+{
+  "success": true,
+  "files_processed": 3,
+  "files_failed": 0,
+  "results": [
+    {
+      "filename": "customer_schema.sql",
+      "status": "success",
+      "file_id": "file-123",
+      "nodes_created": 15,
+      "message": "Processed successfully"
+    }
+  ],
+  "repository_id": "repo-456",
+  "run_id": "run-789"
+}
+```
+
+### Get Upload Configuration
+
+Get current upload settings (allowed extensions, size limits).
+
+```http
+GET /api/v1/files/config
+```
+
+**Response**: `UploadConfig`
+```json
+{
+  "allowed_extensions": ["sql", "ddl", "csv", "json"],
+  "max_file_size_mb": 50
+}
+```
+
+### Update Upload Configuration
+
+Update upload settings.
+
+```http
+PUT /api/v1/files/config
+```
+
+**Request**: `UploadConfigUpdate`
+```json
+{
+  "allowed_extensions": ["sql", "ddl"],
+  "max_file_size_mb": 100
+}
+```
+
+---
+
+## WebSocket
+
+### Dashboard Real-Time Updates
+
+**@critical** - Used in Dashboard WebSocket Connection smoke test
+
+WebSocket endpoint for real-time dashboard updates.
+
+```http
+WS /api/v1/ws/dashboard
+```
+
+**Connection**: Upgrade to WebSocket protocol
+
+**Messages Received** (from server):
+```json
+{
+  "type": "connection_ack",
+  "message": "Connected to dashboard updates",
+  "timestamp": "2025-12-31T20:00:00"
+}
+```
+
+```json
+{
+  "type": "stats_update",
+  "data": {
+    "totalNodes": 1523,
+    "filesProcessed": 234,
+    "databaseTables": 89,
+    "activeQueries": 12
+  },
+  "timestamp": "2025-12-31T20:00:00"
+}
+```
+
+**Connection States**:
+- `Connecting`: Initial connection attempt
+- `Live`: Successfully connected and receiving updates
+- `Offline`: Disconnected or connection failed
+
+**Error Codes**:
+- `1006`: Abnormal closure (connection lost)
+- `403`: Forbidden (CORS or authentication issue)
+
+### Get WebSocket Configuration
+
+Get WebSocket URL for frontend clients.
+
+```http
+GET /api/v1/config/websocket
+```
+
+**Response**:
+```json
+{
+  "websocket_url": "ws://127.0.0.1:8000/api/v1/ws/dashboard"
+}
+```
+
 ---
 
 ## Health & Monitoring
@@ -405,6 +675,70 @@ GET /api/v1/lineage/node/{node_id}?direction=both
 ```
 
 ---
+
+## Project Endpoints
+
+### Get Project Context
+
+Retrieve context information for a specific project.
+
+```http
+GET /api/v1/projects/{project_id}/context
+```
+
+**Path Parameters**:
+- `project_id` (string, required): Project identifier
+
+**Response**:
+```json
+{
+  "description": "Financial risk calculation engine...",
+  "format": "text",
+  "source_entities": ["trade_repository", "market_data"],
+  "target_entities": ["risk_report"],
+  "domain_hints": ["basel", "market risk"],
+  "updated_at": "2025-12-31T20:00:00"
+}
+```
+
+### Update Project Context
+
+Update context information for a project.
+
+```http
+PUT /api/v1/projects/{project_id}/context
+```
+
+**Request**: `ProjectContext`
+```json
+{
+  "description": "Financial risk calculation engine...",
+  "format": "text",
+  "source_entities": ["trade_repository", "market_data"],
+  "target_entities": ["risk_report"],
+  "domain_hints": ["basel", "market risk"]
+}
+```
+
+**Response**:
+```json
+{
+  "description": "Financial risk calculation engine...",
+  "updated_at": "2025-12-31T20:00:00"
+  // ... (returns updated context)
+}
+```
+
+### Upload Project Context File
+
+Upload a markdown file as project context (Stub - 501 Not Implemented).
+
+```http
+POST /api/v1/projects/{project_id}/context/upload
+```
+
+---
+
 
 ## Ingestion Endpoints
 

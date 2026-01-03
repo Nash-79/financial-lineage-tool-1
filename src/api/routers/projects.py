@@ -10,7 +10,7 @@ Provides 9 endpoints for managing the multi-project architecture:
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, UploadFile, File
 
 from src.storage.metadata_store import ProjectStore, RepositoryStore, LinkStore
 from ..models.project import (
@@ -342,3 +342,158 @@ async def delete_link(project_id: str, link_id: str):
     except Exception as e:
         logger.error(f"Failed to delete link: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to delete link: {str(e)}")
+
+
+# ==================== Context Endpoints ====================
+
+
+@router.get("/{project_id}/context")
+async def get_project_context(project_id: str):
+    """
+    Get project context.
+
+    Returns the stored context including description, source/target entities,
+    related projects, and domain hints. Returns empty default structure if
+    no context has been set.
+    """
+    if not project_store.exists(project_id):
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    context = project_store.get_context(project_id)
+    return context
+
+
+@router.put("/{project_id}/context")
+async def update_project_context(project_id: str, context: dict):
+    """
+    Update project context.
+
+    Accepts a JSON object with the following fields:
+    - description: string (required) - Project description
+    - format: "text" | "markdown" - Description format
+    - source_entities: string[] - Starting points for lineage
+    - target_entities: string[] - End targets for lineage
+    - related_projects: string[] - IDs of related projects
+    - domain_hints: string[] - Domain-specific terms
+
+    Self-referential related_projects are rejected (400).
+    """
+    if not project_store.exists(project_id):
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    # Validate context schema
+    errors = project_store.validate_context_schema(context)
+    if errors:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Invalid context schema: {'; '.join(errors)}"
+        )
+
+    try:
+        updated = await project_store.update_context(project_id, context)
+        return updated
+    except ValueError as e:
+        # Circular reference error
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        logger.error(f"Failed to update context: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to update context: {str(e)}")
+
+
+@router.post("/{project_id}/context/upload")
+async def upload_context_file(
+    project_id: str,
+    file: UploadFile = File(...)
+):
+    """
+    Upload a markdown file as project context.
+
+    Accepts a .md file up to 50KB. If the file contains YAML frontmatter,
+    structured fields are extracted:
+    - format, source_entities, target_entities, related_projects, domain_hints
+
+    The markdown body becomes the description.
+    """
+    import yaml
+    from pathlib import Path
+    
+    if not project_store.exists(project_id):
+        raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    # Validate file extension
+    if not file.filename.lower().endswith('.md'):
+        raise HTTPException(
+            status_code=400, 
+            detail="Only .md files are supported for context upload"
+        )
+    
+    # Read content
+    try:
+        content_bytes = await file.read()
+        
+        # Validate size (50KB limit)
+        if len(content_bytes) > 50 * 1024:
+             raise HTTPException(
+                status_code=413, # Payload Too Large
+                detail="File size exceeds 50KB limit"
+            )
+            
+        content_str = content_bytes.decode('utf-8')
+    except Exception as e:
+        logger.error(f"Failed to read uploaded file: {e}")
+        raise HTTPException(status_code=400, detail="Failed to read file content")
+
+    # Parse frontmatter if present
+    context_data = {
+        "description": content_str,
+        "format": "markdown"
+    }
+    
+    # Frontmatter parsing logic
+    if content_str.startswith("---"):
+        try:
+            parts = content_str.split("---", 2)
+            if len(parts) >= 3:
+                # Part 0 is empty (before first ---)
+                # Part 1 is frontmatter
+                # Part 2 is body
+                frontmatter = yaml.safe_load(parts[1])
+                body = parts[2].strip()
+                
+                if isinstance(frontmatter, dict):
+                    # Map frontmatter fields to context fields
+                    # We allow direct mapping for keys that match context schema
+                    for key in ["source_entities", "target_entities", "related_projects", "domain_hints"]:
+                        if key in frontmatter:
+                            context_data[key] = frontmatter[key]
+                    
+                    # Update description to be just the body
+                    context_data["description"] = body
+        except yaml.YAMLError as e:
+            logger.warning(f"Failed to parse frontmatter for project {project_id}: {e}")
+            # Continue with full content as description if parsing fails
+            pass
+
+    # Save to disk
+    try:
+        # Save original file
+        file_path = f"data/contexts/{project_id}.md"
+        # Ensure directory exists (it should, but safety first)
+        Path("data/contexts").mkdir(parents=True, exist_ok=True)
+        
+        with open(file_path, "w", encoding="utf-8") as f:
+            f.write(content_str)
+            
+        # Update metadata store
+        await project_store.update_context(project_id, context_data, file_path)
+        
+        return {
+            "status": "success",
+            "file_path": file_path,
+            "context_extracted": context_data
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to save context file: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to process context file: {str(e)}")
+

@@ -44,6 +44,10 @@ async def chat_deep(request: ChatRequest) -> ChatResponse:
     Raises:
         HTTPException: If analysis fails or agent is not initialized.
     """
+    # Validate query is not empty
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=422, detail="Query cannot be empty")
+
     state = get_app_state()
     start_time = time.time()
 
@@ -95,6 +99,10 @@ async def chat_semantic(request: ChatRequest) -> ChatResponse:
     Raises:
         HTTPException: If semantic search fails.
     """
+    # Validate query is not empty
+    if not request.query or not request.query.strip():
+        raise HTTPException(status_code=422, detail="Query cannot be empty")
+
     state = get_app_state()
     start_time = time.time()
 

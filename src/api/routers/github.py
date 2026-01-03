@@ -18,6 +18,7 @@ import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 
+from src.storage import ArtifactManager
 from src.storage.metadata_store import ProjectStore, RepositoryStore
 from src.services.ingestion_tracker import get_tracker, FileStatus
 from ..config import config
@@ -33,6 +34,7 @@ def get_supported_extensions() -> set:
 # Store instances
 project_store = ProjectStore()
 repository_store = RepositoryStore()
+artifact_manager = ArtifactManager(base_path="data")
 
 # In-memory state storage for OAuth CSRF protection
 # Map state -> timestamp (TTL)
@@ -366,9 +368,11 @@ async def ingest_files(
     and creates nodes in Neo4j with project/repository tagging.
 
     Broadcasts real-time progress updates via WebSocket.
+    Saves files to hierarchical run directory with content deduplication.
     """
     # Validate project
-    if not project_store.exists(request.project_id):
+    project = project_store.get(request.project_id)
+    if not project:
         raise HTTPException(status_code=404, detail=f"Project {request.project_id} not found")
 
     # Get or create repository
@@ -423,6 +427,16 @@ async def ingest_files(
             "results": [{"path": p, "status": "skipped", "reason": "unsupported_type"} for p in skipped_files],
         }
 
+    # Create ingestion run for this GitHub sync
+    run_context = await artifact_manager.create_run(
+        project_id=request.project_id,
+        project_name=project["name"],
+        action=f"github_sync_{request.repo.replace('/', '_')}"
+    )
+
+    # Get raw_source directory for this run
+    raw_source_dir = run_context.get_artifact_dir("raw_source")
+
     # Start ingestion session with progress tracking
     tracker = get_tracker()
     session = await tracker.start_session(
@@ -437,6 +451,7 @@ async def ingest_files(
 
     results = []
     total_nodes_created = 0
+    files_skipped_duplicate = 0
 
     # Process each file
     for file_path in supported_files:
@@ -464,6 +479,39 @@ async def ingest_files(
                 await tracker.file_error(
                     session.ingestion_id, file_path, "Failed to download file"
                 )
+                results.append(file_result)
+                continue
+
+            # Save file to run directory
+            filename = Path(file_path).name
+            local_file_path = raw_source_dir / filename
+
+            # Create subdirectory structure if needed
+            local_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+            # Write file content
+            with open(local_file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+
+            # Register file with content hashing and deduplication
+            registration = await artifact_manager.register_file(
+                project_id=request.project_id,
+                run_id=run_context.run_id,
+                filename=filename,
+                file_path=local_file_path
+            )
+
+            file_result["file_hash"] = registration["file_hash"]
+            file_result["file_status"] = registration["status"]
+            file_result["saved_path"] = str(local_file_path)
+
+            # Check if this is a duplicate (same content)
+            if registration["skip_processing"]:
+                logger.info(f"Skipping processing for duplicate file: {filename}")
+                file_result["status"] = "skipped_duplicate"
+                file_result["message"] = registration["message"]
+                files_skipped_duplicate += 1
+                await tracker.file_skipped(session.ingestion_id, file_path)
                 results.append(file_result)
                 continue
 
@@ -503,6 +551,10 @@ async def ingest_files(
                 except Exception as e:
                     logger.warning(f"Failed to parse {file_path}: {e}")
                     file_result["error"] = f"Parse error: {str(e)}"
+
+            # Mark file as processed in artifact manager
+            if registration.get("file_id"):
+                await artifact_manager.mark_file_processed(registration["file_id"])
 
             file_result["status"] = "processed"
             file_result["nodes_created"] = nodes_created
@@ -547,13 +599,24 @@ async def ingest_files(
     except Exception as e:
         logger.warning(f"Failed to update repository counts: {e}")
 
+    # Mark run as completed
+    run_status = "completed" if (completed_session.files_failed if completed_session else 0) == 0 else "completed_with_errors"
+    await artifact_manager.complete_run(
+        run_id=run_context.run_id,
+        status=run_status,
+        error_message=f"{completed_session.files_failed} files failed" if (completed_session and completed_session.files_failed > 0) else None
+    )
+
     return {
         "success": True,
         "project_id": request.project_id,
         "repository_id": request.repository_id,
+        "run_id": run_context.run_id,
+        "run_dir": str(run_context.run_dir),
         "ingestion_id": session.ingestion_id,
         "files_processed": len(supported_files),
         "files_skipped": len(skipped_files),
+        "files_skipped_duplicate": files_skipped_duplicate,
         "files_failed": completed_session.files_failed if completed_session else 0,
         "total_nodes_created": total_nodes_created,
         "results": results,

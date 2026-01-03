@@ -1,0 +1,200 @@
+lineage-api  |     |     await super().__call__(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+lineage-api  |     |     await self.middleware_stack(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+lineage-api  |     |     raise exc
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+lineage-api  |     |     await self.app(scope, receive, _send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+lineage-api  |     |     with recv_stream, send_stream, collapse_excgroups():
+lineage-api  |     |   File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+lineage-api  |     |     self.gen.throw(typ, value, traceback)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+lineage-api  |     |     raise exc
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 193, in __call__
+lineage-api  |     |     response = await self.dispatch_func(request, call_next)
+lineage-api  |     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/app/src/api/middleware/error_handler.py", line 69, in request_id_middleware
+lineage-api  |     |     return await call_next(request)
+lineage-api  |     |            ^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 168, in call_next
+lineage-api  |     |     raise app_exc from app_exc.__cause__ or app_exc.__context__
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 144, in coro
+lineage-api  |     |     await self.app(scope, receive_or_disconnect, send_no_error)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+lineage-api  |     |     with recv_stream, send_stream, collapse_excgroups():
+lineage-api  |     |   File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+lineage-api  |     |     self.gen.throw(typ, value, traceback)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+lineage-api  |     |     raise exc
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 193, in __call__
+lineage-api  |     |     response = await self.dispatch_func(request, call_next)
+lineage-api  |     |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/app/src/api/middleware/activity.py", line 99, in _activity_middleware
+lineage-api  |     |     return await activity_tracking_middleware(request, call_next, state)
+lineage-api  |     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/app/src/api/middleware/activity.py", line 36, in activity_tracking_middleware
+lineage-api  |     |     response = await call_next(request)
+lineage-api  |     |                ^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 168, in call_next
+lineage-api  |     |     raise app_exc from app_exc.__cause__ or app_exc.__context__
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 144, in coro
+lineage-api  |     |     await self.app(scope, receive_or_disconnect, send_no_error)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+lineage-api  |     |     await self.app(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+lineage-api  |     |     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+lineage-api  |     |     raise exc
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+lineage-api  |     |     await app(scope, receive, sender)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+lineage-api  |     |     await self.app(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+lineage-api  |     |     await self.middleware_stack(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+lineage-api  |     |     await route.handle(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+lineage-api  |     |     await self.app(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 115, in app
+lineage-api  |     |     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+lineage-api  |     |     raise exc
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+lineage-api  |     |     await app(scope, receive, sender)
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 101, in app
+lineage-api  |     |     response = await f(request)
+lineage-api  |     |                ^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 355, in app
+lineage-api  |     |     raw_response = await run_endpoint_function(
+lineage-api  |     |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+lineage-api  |     |     return await dependant.call(**values)
+lineage-api  |     |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     |   File "/app/src/api/routers/admin.py", line 247, in list_endpoints
+lineage-api  |     |     "type": str(param.type_annotation) if param.type_annotation else "string",
+lineage-api  |     |                                           ^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |     | AttributeError: 'ModelField' object has no attribute 'type_annotation'
+lineage-api  |     +------------------------------------
+lineage-api  | 
+lineage-api  | The above exception was the direct cause of the following exception:
+lineage-api  | 
+lineage-api  | Traceback (most recent call last):
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/uvicorn/protocols/http/httptools_impl.py", line 416, in run_asgi
+lineage-api  |     result = await app(  # type: ignore[func-returns-value]
+lineage-api  |              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/uvicorn/middleware/proxy_headers.py", line 60, in __call__
+lineage-api  |     return await self.app(scope, receive, send)
+lineage-api  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/fastapi/applications.py", line 1135, in __call__
+lineage-api  |     await super().__call__(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/applications.py", line 107, in __call__
+lineage-api  |     await self.middleware_stack(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 186, in __call__
+lineage-api  |     raise exc
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/errors.py", line 164, in __call__
+lineage-api  |     await self.app(scope, receive, _send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+lineage-api  |     with recv_stream, send_stream, collapse_excgroups():
+lineage-api  |   File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+lineage-api  |     self.gen.throw(typ, value, traceback)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+lineage-api  |     raise exc
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 193, in __call__
+lineage-api  |     response = await self.dispatch_func(request, call_next)
+lineage-api  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/app/src/api/middleware/error_handler.py", line 69, in request_id_middleware
+lineage-api  |     return await call_next(request)
+lineage-api  |            ^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 168, in call_next
+lineage-api  |     raise app_exc from app_exc.__cause__ or app_exc.__context__
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 144, in coro
+lineage-api  |     await self.app(scope, receive_or_disconnect, send_no_error)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 191, in __call__
+lineage-api  |     with recv_stream, send_stream, collapse_excgroups():
+lineage-api  |   File "/usr/local/lib/python3.11/contextlib.py", line 158, in __exit__
+lineage-api  |     self.gen.throw(typ, value, traceback)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/_utils.py", line 85, in collapse_excgroups
+lineage-api  |     raise exc
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 193, in __call__
+lineage-api  |     response = await self.dispatch_func(request, call_next)
+lineage-api  |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/app/src/api/middleware/activity.py", line 99, in _activity_middleware
+lineage-api  |     return await activity_tracking_middleware(request, call_next, state)
+lineage-api  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/app/src/api/middleware/activity.py", line 36, in activity_tracking_middleware
+lineage-api  |     response = await call_next(request)
+lineage-api  |                ^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 168, in call_next
+lineage-api  |     raise app_exc from app_exc.__cause__ or app_exc.__context__
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/base.py", line 144, in coro
+lineage-api  |     await self.app(scope, receive_or_disconnect, send_no_error)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/cors.py", line 85, in __call__
+lineage-api  |     await self.app(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/middleware/exceptions.py", line 63, in __call__
+lineage-api  |     await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+lineage-api  |     raise exc
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+lineage-api  |     await app(scope, receive, sender)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+lineage-api  |     await self.app(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/routing.py", line 716, in __call__
+lineage-api  |     await self.middleware_stack(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/routing.py", line 736, in app
+lineage-api  |     await route.handle(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/routing.py", line 290, in handle
+lineage-api  |     await self.app(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 115, in app
+lineage-api  |     await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+lineage-api  |     raise exc
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+lineage-api  |     await app(scope, receive, sender)
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 101, in app
+lineage-api  |     response = await f(request)
+lineage-api  |                ^^^^^^^^^^^^^^^^
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 355, in app
+lineage-api  |     raw_response = await run_endpoint_function(
+lineage-api  |                    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/root/.local/lib/python3.11/site-packages/fastapi/routing.py", line 243, in run_endpoint_function
+lineage-api  |     return await dependant.call(**values)
+lineage-api  |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+lineage-api  |   File "/app/src/api/routers/admin.py", line 247, in list_endpoints
+lineage-api  |     "type": str(param.type_annotation) if param.type_annotation else "string",
+lineage-api  |                                           ^^^^^^^^^^^^^^^^^^^^^
+lineage-api  | AttributeError: 'ModelField' object has no attribute 'type_annotation'
+lineage-api  | INFO:     172.18.0.1:51154 - "GET /api/v1/config/websocket HTTP/1.1" 200 OK
+lineage-api  | INFO:     172.18.0.1:51154 - "POST /admin/restart HTTP/1.1" 200 OK
+lineage-api  | INFO:     Started server process [1]
+lineage-api  | INFO:     Waiting for application startup.
+lineage-api  | [*] Starting Local Lineage Tool with Neo4j...
+lineage-api  | [*] Initializing DuckDB at data/metadata.duckdb...
+lineage-api  | [!] WARNING: Failed to initialize DuckDB: IO Error: Cannot open file "/app/data/metadata.duckdb": Permission denied
+lineage-api  | [!] Metadata storage will not be available
+lineage-api  | [*] Connecting to Redis at redis:6379...
+lineage-api  | [+] Connected to Redis successfully
+lineage-api  | [*] Initializing activity tracker...
+lineage-api  | [+] Activity tracker initialized
+lineage-api  | [*] Checking Ollama connectivity at http://host.docker.internal:11434...
+lineage-api  | [!] WARNING: Missing Ollama models: ['nomic-embed-text']
+lineage-api  | [!] Please pull them with:
+lineage-api  |     ollama pull nomic-embed-text
+lineage-api  | [!] Continuing anyway, but some features may not work...
+lineage-api  | [*] Initializing LlamaIndex service...
+lineage-api  | [+] LlamaIndex service initialized successfully
+lineage-api  | [*] Connecting to Neo4j at neo4j+s://66e1cb8c.databases.neo4j.io...
+lineage-api  | [+] Connected to Neo4j at neo4j+s://66e1cb8c.databases.neo4j.io
+lineage-api  | [+] Connected to Neo4j
+lineage-api  | [+] Created index: CREATE INDEX entity_id IF NOT EXISTS FOR (n:Table)...
+lineage-api  | [+] Created index: CREATE INDEX entity_id IF NOT EXISTS FOR (n:Column...
+lineage-api  | [+] Created index: CREATE INDEX entity_id IF NOT EXISTS FOR (n:View) ...
+lineage-api  | [+] Created index: CREATE INDEX entity_name IF NOT EXISTS FOR (n:Tabl...
+lineage-api  | [+] Created index: CREATE INDEX entity_name IF NOT EXISTS FOR (n:Colu...
+lineage-api  | [+] Initialized Code Parser and Graph Extractor
+lineage-api  | [+] Created Qdrant collection
+lineage-api  | [+] Ingestion tracker connected to WebSocket
+lineage-api  | [+] All services initialized
+lineage-api  | [i] Graph stats: {'nodes': 46, 'edges': 42, 'node_types': {'Table': 10, 'Column': 35, 'added_repr': 1}, 'relationship_types': {'CONTAINS': 35, 'DERIVES_FROM': 1, 'REFERENCES': 6}}
+lineage-api  | INFO:     Application startup complete.
+lineage-api  | INFO:     Uvicorn running on http://0.0.0.0:8000 (Press CTRL+C to quit)
