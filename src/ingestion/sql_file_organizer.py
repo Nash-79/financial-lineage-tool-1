@@ -47,7 +47,7 @@ class SQLFileOrganizer:
     def __init__(
         self,
         output_base_dir: str = "./data/separated_sql",
-        dialect: str = "tsql",
+        dialect: str = "auto",
         add_metadata_header: bool = True,
         overwrite_existing: bool = False,
         create_source_folders: bool = True,
@@ -360,7 +360,7 @@ class SQLFileOrganizer:
 def organize_sql_files(
     input_dir: str,
     output_dir: str = "./data/separated_sql",
-    dialect: str = "tsql",
+    dialect: str = "auto",
     pattern: str = "*.sql",
     create_source_folders: bool = True,
 ) -> Dict:

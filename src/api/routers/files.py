@@ -18,6 +18,8 @@ from pydantic import BaseModel
 from src.storage import ArtifactManager
 from src.storage.metadata_store import ProjectStore, RepositoryStore
 from src.storage.upload_settings import UploadSettingsStore
+from src.services.ingestion_tracker import get_tracker, FileStatus
+from src.config.sql_dialects import validate_dialect
 from ..config import config
 
 logger = logging.getLogger(__name__)
@@ -88,6 +90,8 @@ async def upload_files(
     project_id: str = Form(..., description="Project ID (required)"),
     repository_id: Optional[str] = Form(None, description="Repository ID (optional, creates new if omitted)"),
     repository_name: Optional[str] = Form(None, description="Repository name (required if repository_id omitted)"),
+    instructions: Optional[str] = Form(None, description="Optional instructions for lineage extraction"),
+    dialect: Optional[str] = Form("auto", description="SQL dialect for parsing"),
 ) -> Dict[str, Any]:
     """
     Upload files for ingestion with project scoping.
@@ -109,6 +113,10 @@ async def upload_files(
     project = project_store.get(project_id)
     if not project:
         raise HTTPException(status_code=404, detail=f"Project not found: {project_id}")
+
+    dialect_value = (dialect or "auto").strip()
+    if not validate_dialect(dialect_value):
+        raise HTTPException(status_code=400, detail=f"Unsupported SQL dialect: {dialect_value}")
 
     # Get or create repository
     if repository_id:
@@ -144,8 +152,26 @@ async def upload_files(
         action=f"upload_{action_name}"
     )
 
+    tracker = get_tracker()
+    file_paths = [upload_file.filename for upload_file in files]
+    session = await tracker.start_session(
+        source="upload",
+        project_id=project_id,
+        repository_id=repository_id,
+        file_paths=file_paths,
+    )
+
+    # Save instructions if provided
+    if instructions:
+        instructions_file = run_context.run_dir / "instructions.md"
+        with open(instructions_file, "w", encoding="utf-8") as f:
+            f.write(f"# Upload Instructions\n\n{instructions}\n")
+        logger.info(f"Saved upload instructions to {instructions_file}")
+
     # Get raw_source directory for this run
     raw_source_dir = run_context.get_artifact_dir("raw_source")
+    raw_source_dir.mkdir(parents=True, exist_ok=True)
+
 
     # Process each file
     results = []
@@ -169,6 +195,11 @@ async def upload_files(
                 file_result["status"] = "error"
                 file_result["error"] = f"Unsupported file type. Allowed: {', '.join(get_allowed_extensions())}"
                 files_failed += 1
+                await tracker.file_error(
+                    session.ingestion_id,
+                    upload_file.filename,
+                    file_result["error"],
+                )
                 results.append(file_result)
                 continue
 
@@ -180,6 +211,11 @@ async def upload_files(
                 file_result["status"] = "error"
                 file_result["error"] = f"File too large. Maximum size: {config.UPLOAD_MAX_FILE_SIZE_MB}MB"
                 files_failed += 1
+                await tracker.file_error(
+                    session.ingestion_id,
+                    upload_file.filename,
+                    file_result["error"],
+                )
                 results.append(file_result)
                 continue
 
@@ -211,6 +247,11 @@ async def upload_files(
                 file_result["status"] = "skipped_duplicate"
                 file_result["message"] = registration["message"]
                 files_skipped_duplicate += 1
+                await tracker.file_skipped(
+                    session.ingestion_id,
+                    upload_file.filename,
+                    reason="duplicate",
+                )
                 results.append(file_result)
                 continue
 
@@ -222,25 +263,46 @@ async def upload_files(
                 try:
                     # Parse file
                     ext = Path(upload_file.filename).suffix.lower()
+                    await tracker.update_file_status(
+                        session.ingestion_id,
+                        upload_file.filename,
+                        FileStatus.PARSING,
+                    )
                     if ext in {".sql", ".ddl"}:
+                        await tracker.update_file_status(
+                            session.ingestion_id,
+                            upload_file.filename,
+                            FileStatus.EXTRACTING,
+                        )
                         content_str = content.decode("utf-8")
-                        parse_result = state.parser.parse(content_str)
-
-                        if parse_result.get("entities"):
-                            # Extract to graph with project/repository tagging
-                            # Note: This requires updating the extractor to support tagging
-                            for entity in parse_result.get("entities", []):
-                                # Add project_id and repository_id to entity properties
-                                entity["project_id"] = project_id
-                                entity["repository_id"] = repository_id
-                                entity["source_file"] = str(file_path)
-
-                            # Add to graph
-                            state.extractor.add_entities(parse_result["entities"])
-                            nodes_created = len(parse_result.get("entities", []))
+                        nodes_created = state.extractor.ingest_sql_lineage(
+                            sql_content=content_str,
+                            dialect=dialect_value,
+                            source_file=str(file_path),
+                            project_id=project_id,
+                            repository_id=repository_id,
+                            source="upload",
+                        ) or 0
+                        state.extractor.flush_batch()
+                    else:
+                        await tracker.update_file_status(
+                            session.ingestion_id,
+                            upload_file.filename,
+                            FileStatus.COMPLETE,
+                        )
 
                 except Exception as e:
                     logger.warning(f"Failed to extract lineage from {upload_file.filename}: {e}")
+                    file_result["status"] = "error"
+                    file_result["error"] = str(e)
+                    files_failed += 1
+                    await tracker.file_error(
+                        session.ingestion_id,
+                        upload_file.filename,
+                        str(e),
+                    )
+                    results.append(file_result)
+                    continue
 
             # Mark file as processed in artifact manager
             if registration.get("file_id"):
@@ -250,12 +312,22 @@ async def upload_files(
             file_result["nodes_created"] = nodes_created
             total_nodes_created += nodes_created
             files_processed += 1
+            await tracker.file_complete(
+                session.ingestion_id,
+                upload_file.filename,
+                nodes_created,
+            )
 
         except Exception as e:
             logger.error(f"Failed to process file {upload_file.filename}: {e}")
             file_result["status"] = "error"
             file_result["error"] = str(e)
             files_failed += 1
+            await tracker.file_error(
+                session.ingestion_id,
+                upload_file.filename,
+                str(e),
+            )
 
         results.append(file_result)
 
@@ -276,10 +348,12 @@ async def upload_files(
         status=run_status,
         error_message=f"{files_failed} files failed" if files_failed > 0 else None
     )
+    await tracker.complete_session(session.ingestion_id)
 
     return {
         "project_id": project_id,
         "repository_id": repository_id,
+        "ingestion_id": session.ingestion_id,
         "run_id": run_context.run_id,
         "run_dir": str(run_context.run_dir),
         "files_processed": files_processed,

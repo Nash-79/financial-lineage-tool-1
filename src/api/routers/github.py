@@ -21,6 +21,7 @@ from pydantic import BaseModel
 from src.storage import ArtifactManager
 from src.storage.metadata_store import ProjectStore, RepositoryStore
 from src.services.ingestion_tracker import get_tracker, FileStatus
+from src.config.sql_dialects import validate_dialect
 from ..config import config
 
 logger = logging.getLogger(__name__)
@@ -67,6 +68,7 @@ class GitHubIngestRequest(BaseModel):
     repository_name: Optional[str] = None
     items: List[Dict[str, Any]]
     branch: str = "main"
+    dialect: str = "auto"
 
 
 @router.get("/auth", response_model=GitHubAuthResponse)
@@ -392,6 +394,10 @@ async def ingest_files(
         )
         request.repository_id = repo["id"]
 
+    dialect_value = (request.dialect or "auto").strip()
+    if not validate_dialect(dialect_value):
+        raise HTTPException(status_code=400, detail=f"Unsupported SQL dialect: {dialect_value}")
+
     # Collect all file paths to process
     file_paths = []
     for item in request.items:
@@ -436,6 +442,7 @@ async def ingest_files(
 
     # Get raw_source directory for this run
     raw_source_dir = run_context.get_artifact_dir("raw_source")
+    raw_source_dir.mkdir(parents=True, exist_ok=True)
 
     # Start ingestion session with progress tracking
     tracker = get_tracker()
@@ -533,20 +540,16 @@ async def ingest_files(
                             session.ingestion_id, file_path, FileStatus.EXTRACTING
                         )
 
-                        parse_result = state.parser.parse(content)
-
-                        if parse_result.get("entities"):
-                            # Tag entities with project/repository metadata
-                            for entity in parse_result.get("entities", []):
-                                entity["project_id"] = request.project_id
-                                entity["repository_id"] = request.repository_id
-                                entity["source_file"] = file_path
-                                entity["source"] = "github"
-                                entity["source_repo"] = request.repo
-
-                            # Add to graph
-                            state.extractor.add_entities(parse_result["entities"])
-                            nodes_created = len(parse_result.get("entities", []))
+                        nodes_created = state.extractor.ingest_sql_lineage(
+                            sql_content=content,
+                            dialect=dialect_value,
+                            source_file=file_path,
+                            project_id=request.project_id,
+                            repository_id=request.repository_id,
+                            source="github",
+                            source_repo=request.repo,
+                        ) or 0
+                        state.extractor.flush_batch()
 
                 except Exception as e:
                     logger.warning(f"Failed to parse {file_path}: {e}")

@@ -107,7 +107,7 @@ class EnhancedSQLParser:
         re.IGNORECASE | re.DOTALL,
     )
 
-    def __init__(self, dialect: str = "tsql", cache=None):
+    def __init__(self, dialect: str = "auto", cache=None):
         self.dialect = dialect
         self.objects = []
         self.object_map = {}  # Map of object name to SQLServerObject
@@ -395,7 +395,7 @@ class EnhancedSQLParser:
 
 
 def parse_sql_with_comments(
-    content: str, dialect: str = "tsql"
+    content: str, dialect: str = "auto"
 ) -> List[SQLServerObject]:
     """
     Convenience function to parse SQL using comment-based detection.

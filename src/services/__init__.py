@@ -6,6 +6,7 @@ from .ollama_service import OllamaClient
 from .qdrant_service import QdrantLocalClient
 from .agent_service import LocalSupervisorAgent
 from .memory_service import MemoryService
+from .lineage_inference import LineageInferenceService
 from .ingestion_tracker import (
     IngestionTracker,
     IngestionSession,
@@ -20,6 +21,7 @@ __all__ = [
     "QdrantLocalClient",
     "LocalSupervisorAgent",
     "MemoryService",
+    "LineageInferenceService",
     "IngestionTracker",
     "IngestionSession",
     "IngestionStatus",

@@ -93,17 +93,30 @@ class SQLChunker(BaseChunker):
     4. Include CTE dependencies as context prefix
     """
 
-    def __init__(self, max_tokens: int = 1500, dialect: str = "tsql"):
+    def __init__(self, max_tokens: int = 1500, dialect: str = "auto"):
         super().__init__(max_tokens)
         self.dialect = dialect
+        self._resolved_dialect = None  # Cached resolved dialect
+    
+    def _get_resolved_dialect(self) -> str:
+        """Get resolved sqlglot dialect, resolving 'auto' to concrete dialect."""
+        if self._resolved_dialect is None:
+            try:
+                from ..config.sql_dialects import resolve_dialect_for_parsing
+                self._resolved_dialect = resolve_dialect_for_parsing(self.dialect)
+            except Exception:
+                # Fallback to tsql if resolution fails
+                self._resolved_dialect = "tsql"
+        return self._resolved_dialect
 
     def chunk(self, content: str, file_path: str) -> list[CodeChunk]:
         """Chunk SQL content preserving semantic boundaries."""
         chunks = []
 
-        # Try to parse with sqlglot
+        # Try to parse with sqlglot using resolved dialect
         try:
-            statements = sqlglot.parse(content, dialect=self.dialect)
+            resolved = self._get_resolved_dialect()
+            statements = sqlglot.parse(content, dialect=resolved)
         except Exception:
             # Fallback to statement-level splitting
             return self._fallback_chunk(content, file_path)
@@ -133,7 +146,7 @@ class SQLChunker(BaseChunker):
         # Build CTE dependency graph
         for cte in ctes:
             cte_name = cte.alias
-            cte_sql = cte.sql(dialect=self.dialect)
+            cte_sql = cte.sql(dialect=self._get_resolved_dialect())
             cte_map[cte_name] = cte_sql
 
             # Find table references within CTE to identify dependencies
@@ -145,7 +158,7 @@ class SQLChunker(BaseChunker):
             cte_deps[cte_name] = deps
 
         # Try to keep all CTEs together if under token limit
-        full_sql = statement.sql(dialect=self.dialect)
+        full_sql = statement.sql(dialect=self._get_resolved_dialect())
         if self.count_tokens(full_sql) <= self.max_tokens:
             chunk = self._create_chunk(
                 content=full_sql,
@@ -181,7 +194,7 @@ class SQLChunker(BaseChunker):
             # Add the main SELECT (without CTEs) as final chunk
             main_select = statement.find(exp.Select)
             if main_select:
-                main_sql = main_select.sql(dialect=self.dialect)
+                main_sql = main_select.sql(dialect=self._get_resolved_dialect())
                 chunk = self._create_chunk(
                     content=main_sql,
                     chunk_type=ChunkType.SQL_STATEMENT,
@@ -197,7 +210,7 @@ class SQLChunker(BaseChunker):
         self, statement: exp.Expression, file_path: str
     ) -> list[CodeChunk]:
         """Chunk a statement without CTEs."""
-        sql = statement.sql(dialect=self.dialect)
+        sql = statement.sql(dialect=self._get_resolved_dialect())
 
         if self.count_tokens(sql) <= self.max_tokens:
             return [
@@ -248,7 +261,8 @@ class SQLChunker(BaseChunker):
         """Extract table names from SQL."""
         tables = []
         try:
-            parsed = sqlglot.parse_one(sql, dialect=self.dialect)
+            resolved = self._get_resolved_dialect()
+            parsed = sqlglot.parse_one(sql, dialect=resolved)
             for table in parsed.find_all(exp.Table):
                 full_name = ".".join(
                     filter(None, [table.catalog, table.db, table.name])
@@ -264,7 +278,8 @@ class SQLChunker(BaseChunker):
         """Extract column references from SQL."""
         columns = []
         try:
-            parsed = sqlglot.parse_one(sql, dialect=self.dialect)
+            resolved = self._get_resolved_dialect()
+            parsed = sqlglot.parse_one(sql, dialect=resolved)
             for col in parsed.find_all(exp.Column):
                 full_name = ".".join(filter(None, [col.table, col.name]))
                 columns.append(full_name)
@@ -275,9 +290,22 @@ class SQLChunker(BaseChunker):
     def _fallback_chunk(self, content: str, file_path: str) -> list[CodeChunk]:
         """Fallback chunking by SQL statement boundaries."""
         chunks = []
+        resolved = self._get_resolved_dialect()
 
         # Split on semicolons while handling string literals
-        statements = sqlglot.parse(content, dialect=self.dialect)
+        try:
+            statements = sqlglot.parse(content, dialect=resolved)
+        except Exception:
+            # If parsing fails entirely, create a single generic chunk
+            return [CodeChunk(
+                content=content,
+                chunk_type=ChunkType.GENERIC,
+                file_path=file_path,
+                start_line=0,
+                end_line=0,
+                language="sql",
+                token_count=self.count_tokens(content),
+            )]
 
         current_chunk = ""
         current_tokens = 0
@@ -285,7 +313,7 @@ class SQLChunker(BaseChunker):
         for stmt in statements:
             if stmt is None:
                 continue
-            stmt_sql = stmt.sql(dialect=self.dialect)
+            stmt_sql = stmt.sql(dialect=resolved)
             stmt_tokens = self.count_tokens(stmt_sql)
 
             if current_tokens + stmt_tokens > self.max_tokens and current_chunk:

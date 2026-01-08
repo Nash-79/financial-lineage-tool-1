@@ -10,7 +10,7 @@ import hashlib
 import json
 import os
 import logging
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 
 logger = logging.getLogger(__name__)
 
@@ -87,11 +87,21 @@ class GraphExtractor:
             relationship_type: Relationship type
             **properties: Additional relationship properties
         """
+        # Inject default metadata for hybrid lineage system
+        # These defaults apply to deterministic (parser-based) edges
+        metadata = {
+            "source": properties.get("source", "parser"),
+            "confidence": properties.get("confidence", 1.0),
+            "status": properties.get("status", "approved"),
+        }
+        # Merge with any additional properties
+        merged_properties = {**metadata, **properties}
+        
         rel_data = {
             "source_id": source_id,
             "target_id": target_id,
             "relationship_type": relationship_type,
-            **properties,
+            **merged_properties,
         }
 
         if self.enable_batching:
@@ -102,11 +112,15 @@ class GraphExtractor:
         else:
             # Fallback to individual write
             self.client.add_relationship(
-                source_id, target_id, relationship_type, **properties
+                source_id, target_id, relationship_type, **merged_properties
             )
 
     def _flush_entities(self):
-        """Flush accumulated entities to Neo4j using batch operations."""
+        """Flush accumulated entities to Neo4j using batch operations.
+        
+        Groups entities by entity_type to ensure homogeneous batches,
+        as batch_create_entities uses the first entity's type for all.
+        """
         if not self._entity_batch:
             return
 
@@ -114,10 +128,22 @@ class GraphExtractor:
         logger.debug(f"Flushing {count} entities to Neo4j")
 
         try:
-            created = self.client.batch_create_entities(
-                entities=self._entity_batch, batch_size=self.batch_size
-            )
-            logger.info(f"Successfully flushed {created}/{count} entities")
+            # Group entities by type to ensure homogeneous batches
+            from collections import defaultdict
+            by_type = defaultdict(list)
+            for entity in self._entity_batch:
+                entity_type = entity.get("entity_type", "Node")
+                by_type[entity_type].append(entity)
+            
+            total_created = 0
+            for entity_type, entities in by_type.items():
+                logger.debug(f"Flushing {len(entities)} {entity_type} entities")
+                created = self.client.batch_create_entities(
+                    entities=entities, batch_size=self.batch_size
+                )
+                total_created += created
+            
+            logger.info(f"Successfully flushed {total_created}/{count} entities")
         except Exception as e:
             logger.error(f"Failed to flush entities: {e}")
             raise
@@ -126,7 +152,11 @@ class GraphExtractor:
             self._entity_batch.clear()
 
     def _flush_relationships(self):
-        """Flush accumulated relationships to Neo4j using batch operations."""
+        """Flush accumulated relationships to Neo4j using batch operations.
+        
+        Groups relationships by relationship_type to ensure homogeneous batches,
+        as batch_create_relationships uses the first relationship's type for all.
+        """
         if not self._relationship_batch:
             return
 
@@ -134,10 +164,22 @@ class GraphExtractor:
         logger.debug(f"Flushing {count} relationships to Neo4j")
 
         try:
-            created = self.client.batch_create_relationships(
-                relationships=self._relationship_batch, batch_size=self.batch_size
-            )
-            logger.info(f"Successfully flushed {created}/{count} relationships")
+            # Group relationships by type to ensure homogeneous batches
+            from collections import defaultdict
+            by_type = defaultdict(list)
+            for rel in self._relationship_batch:
+                rel_type = rel.get("relationship_type", "RELATED_TO")
+                by_type[rel_type].append(rel)
+            
+            total_created = 0
+            for rel_type, relationships in by_type.items():
+                logger.debug(f"Flushing {len(relationships)} {rel_type} relationships")
+                created = self.client.batch_create_relationships(
+                    relationships=relationships, batch_size=self.batch_size
+                )
+                total_created += created
+            
+            logger.info(f"Successfully flushed {total_created}/{count} relationships")
         except Exception as e:
             logger.error(f"Failed to flush relationships: {e}")
             raise
@@ -158,7 +200,15 @@ class GraphExtractor:
         logger.info("Batch flush complete")
 
     def ingest_sql_lineage(
-        self, sql_content: str, dialect: str = "tsql", source_file: str = "unknown"
+        self,
+        sql_content: str,
+        dialect: str = "auto",
+        source_file: str = "unknown",
+        file_node_id: str = None,
+        project_id: Optional[str] = None,
+        repository_id: Optional[str] = None,
+        source: Optional[str] = None,
+        source_repo: Optional[str] = None,
     ):
         """
         Parses a SQL script and ingests the resulting lineage into Neo4j.
@@ -168,12 +218,38 @@ class GraphExtractor:
             sql_content: The SQL script to process.
             dialect: The SQL dialect of the script.
             source_file: The name of the file this SQL came from.
+            project_id: Optional project identifier for tagging nodes.
+            repository_id: Optional repository identifier for tagging nodes.
+            source: Optional ingestion source label (e.g., upload/github).
+            source_repo: Optional source repository identifier (e.g., owner/repo).
         """
         parsed_data = self.parser.parse_sql(sql_content, dialect=dialect)
 
         if not parsed_data:
             print(f"Skipping ingestion for {source_file} as parsing yielded no data.")
-            return
+            return 0
+
+        nodes_created = 0
+        common_properties: Dict[str, Any] = {
+            "project_id": project_id,
+            "repository_id": repository_id,
+            "source_file": source_file,
+        }
+        if source:
+            common_properties["source"] = source
+        if source_repo:
+            common_properties["source_repo"] = source_repo
+
+        def add_entity(entity_id: str, entity_type: str, **properties: Any) -> None:
+            nonlocal nodes_created
+            merged = {**common_properties, **properties}
+            merged = {key: value for key, value in merged.items() if value is not None}
+            self._add_entity_to_batch(
+                entity_id=entity_id,
+                entity_type=entity_type,
+                **merged,
+            )
+            nodes_created += 1
 
         # 1. Ingest Data Assets (Tables, Views)
         write_asset_id = None
@@ -184,23 +260,32 @@ class GraphExtractor:
                 if parsed_data["write"] in parsed_data.get("views", [])
                 else "Table"
             )
-            self._add_entity_to_batch(
+            add_entity(
                 entity_id=write_asset_id,
                 entity_type=asset_type,
                 name=parsed_data["write"],
-                source_file=source_file,
             )
 
         read_asset_ids = {}
         for asset_name in parsed_data.get("read", []):
             asset_id = self._generate_id("data_asset", asset_name)
             read_asset_ids[asset_name] = asset_id
-            self._add_entity_to_batch(
+            add_entity(
                 entity_id=asset_id,
                 entity_type="DataAsset",  # Generic type, could be table or view
                 name=asset_name,
-                source_file=source_file,
             )
+
+        # Link Write Asset to Read Assets (Table/View/MV Lineage)
+        if write_asset_id:
+            # Determine relationship type (Target DEPENDS_ON Source)
+            is_mv = parsed_data["write"] in parsed_data.get("materialized_views", [])
+            is_view = parsed_data["write"] in parsed_data.get("views", [])
+            
+            rel_type = "DERIVES" if (is_mv or is_view) else "READS_FROM"
+            
+            for source_id in read_asset_ids.values():
+                self._add_relationship_to_batch(write_asset_id, source_id, rel_type)
 
         # 2. Ingest Column-Level Lineage
         for col_lineage in parsed_data.get("columns", []):
@@ -213,7 +298,7 @@ class GraphExtractor:
             target_col_id = self._generate_id(
                 "column", parsed_data["write"], target_col_name
             )
-            self._add_entity_to_batch(
+            add_entity(
                 entity_id=target_col_id, entity_type="Column", name=target_col_name
             )
             # Link column to its parent asset
@@ -224,7 +309,7 @@ class GraphExtractor:
             trans_id = self._generate_id(
                 "transformation", transformation_logic, target_col_id
             )
-            self._add_entity_to_batch(
+            add_entity(
                 entity_id=trans_id,
                 entity_type="Transformation",
                 logic=transformation_logic,
@@ -243,7 +328,7 @@ class GraphExtractor:
                 if not source_asset_id:
                     # If the source asset wasn't in the main "read" list, add it now
                     source_asset_id = self._generate_id("data_asset", source_table_name)
-                    self._add_entity_to_batch(
+                    add_entity(
                         entity_id=source_asset_id,
                         entity_type="DataAsset",
                         name=source_table_name,
@@ -253,7 +338,7 @@ class GraphExtractor:
                 source_col_id = self._generate_id(
                     "column", source_table_name, source_col_name
                 )
-                self._add_entity_to_batch(
+                add_entity(
                     entity_id=source_col_id, entity_type="Column", name=source_col_name
                 )
                 self._add_relationship_to_batch(
@@ -264,14 +349,85 @@ class GraphExtractor:
         # 3. Ingest Functions and Procedures
         for func_name in parsed_data.get("functions_and_procedures", []):
             func_id = self._generate_id("function", func_name)
-            self._add_entity_to_batch(
+            add_entity(
                 entity_id=func_id,
                 entity_type="FunctionOrProcedure",
                 name=func_name,
-                source_file=source_file,
             )
 
+        # 4. Ingest Triggers
+        for trigger_data in parsed_data.get("triggers", []):
+            trigger_name = trigger_data.get("name")
+            target_table = trigger_data.get("target_table")
+            
+            trigger_id = self._generate_id("trigger", trigger_name)
+            add_entity(
+                entity_id=trigger_id,
+                entity_type="Trigger",
+                name=trigger_name,
+            )
+            
+            if target_table:
+                target_id = self._generate_id("data_asset", target_table)
+                # Ensure target node exists (might differ from general read/write assets)
+                add_entity(
+                    entity_id=target_id, entity_type="DataAsset", name=target_table
+                )
+                self._add_relationship_to_batch(trigger_id, target_id, "ATTACHED_TO")
+
+        # 5. Ingest Synonyms  
+        for synonym_data in parsed_data.get("synonyms", []):
+            synonym_name = synonym_data.get("name")
+            target_obj = synonym_data.get("target_object")
+            
+            synonym_id = self._generate_id("synonym", synonym_name)
+            add_entity(
+                entity_id=synonym_id,
+                entity_type="Synonym",
+                name=synonym_name,
+            )
+            
+            if target_obj:
+                target_id = self._generate_id("data_asset", target_obj)
+                add_entity(
+                    entity_id=target_id, entity_type="DataAsset", name=target_obj
+                )
+                self._add_relationship_to_batch(synonym_id, target_id, "ALIAS_OF")
+
+        # 6. Ingest Materialized Views
+        for mv_name in parsed_data.get("materialized_views", []):
+            mv_id = self._generate_id("materialized_view", mv_name)
+            add_entity(
+                entity_id=mv_id,
+                entity_type="MaterializedView",
+                name=mv_name,
+            )
+
+        # 7. Ingest Procedure Calls
+        for proc_call in parsed_data.get("procedure_calls", []):
+            proc_name = proc_call.get("name")
+            if not proc_name:
+                continue
+            
+            # Create or reference the procedure being called
+            called_proc_id = self._generate_id("procedure", proc_name)
+            add_entity(
+                entity_id=called_proc_id,
+                entity_type="FunctionOrProcedure",
+                name=proc_name,
+            )
+
+            # Link call
+            # If the SQL defines a procedure, assume it makes the call
+            is_proc_def = write_asset_id and parsed_data["write"] in parsed_data.get("functions_and_procedures", [])
+            call_source = write_asset_id if is_proc_def else file_node_id
+            
+            if call_source:
+                self._add_relationship_to_batch(call_source, called_proc_id, "CALLS")
+
+
         print(f"Successfully ingested lineage from {source_file}.")
+        return nodes_created
 
     def ingest_file(self, file_path: str):
         """
@@ -305,7 +461,7 @@ class GraphExtractor:
                 print(f"[*] Ingesting SQL: {filename}")
                 # Use existing logic, but maybe we can link assets to this file node?
                 # For now, just call the existing method.
-                self.ingest_sql_lineage(content, source_file=filename)
+                self.ingest_sql_lineage(content, source_file=filename, file_node_id=file_id)
 
             elif ext == ".py":
                 print(f"[*] Ingesting Python: {filename}")
@@ -365,6 +521,21 @@ class GraphExtractor:
             self._add_entity_to_batch(entity_id=mod_id, entity_type="Module", name=imp)
             if file_node_id:
                 self._add_relationship_to_batch(file_node_id, mod_id, "IMPORTS")
+        
+        # Ingest Heuristic Table References (Python -> SQL lineage)
+        for table_ref in parsed.get("table_references", []):
+            table_id = self._generate_id("data_asset", table_ref)
+            self._add_entity_to_batch(
+                entity_id=table_id,
+                entity_type="DataAsset",
+                name=table_ref,
+            )
+            # Create READS_FROM edge from file to table (heuristic)
+            if file_node_id:
+                self._add_relationship_to_batch(
+                    file_node_id, table_id, "READS_FROM",
+                    evidence=f"Heuristic extraction from Python code in {source_file}"
+                )
 
     def ingest_json(self, content: str, source_file: str, file_node_id: str = None):
         """Ingest JSON structure."""

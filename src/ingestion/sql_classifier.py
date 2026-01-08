@@ -68,14 +68,26 @@ class SQLClassifier:
     - CREATE SCHEMA
     """
 
-    def __init__(self, dialect: str = "tsql"):
+    def __init__(self, dialect: str = "auto"):
         """
         Initialize the classifier.
 
         Args:
-            dialect: SQL dialect (tsql, postgres, mysql, etc.)
+            dialect: SQL dialect (tsql, postgres, mysql, etc.) or 'auto' for default
         """
         self.dialect = dialect
+        self._resolved_dialect = None  # Cached resolved dialect
+    
+    def _get_resolved_dialect(self) -> str:
+        """Get resolved sqlglot dialect, resolving 'auto' to concrete dialect."""
+        if self._resolved_dialect is None:
+            try:
+                from ..config.sql_dialects import resolve_dialect_for_parsing
+                self._resolved_dialect = resolve_dialect_for_parsing(self.dialect)
+            except Exception:
+                # Fallback to tsql if resolution fails
+                self._resolved_dialect = "tsql"
+        return self._resolved_dialect
 
     def classify_file(self, file_content: str) -> List[SQLObject]:
         """
@@ -102,8 +114,9 @@ class SQLClassifier:
         """Classify using sqlglot AST parsing."""
         objects = []
 
-        # Parse all statements
-        statements = parse(content, dialect=self.dialect)
+        # Parse all statements with resolved dialect
+        resolved = self._get_resolved_dialect()
+        statements = parse(content, dialect=resolved)
 
         for stmt in statements:
             if stmt is None:
@@ -330,7 +343,7 @@ class SQLClassifier:
 
 
 # Convenience function
-def classify_sql(sql_content: str, dialect: str = "tsql") -> List[SQLObject]:
+def classify_sql(sql_content: str, dialect: str = "auto") -> List[SQLObject]:
     """
     Classify SQL objects in content.
 

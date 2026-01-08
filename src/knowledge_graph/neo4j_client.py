@@ -827,11 +827,20 @@ class Neo4jGraphClient:
         Create recommended indexes for performance.
         """
         indexes = [
+            # Entity ID indexes
             "CREATE INDEX entity_id IF NOT EXISTS FOR (n:Table) ON (n.id)",
             "CREATE INDEX entity_id IF NOT EXISTS FOR (n:Column) ON (n.id)",
             "CREATE INDEX entity_id IF NOT EXISTS FOR (n:View) ON (n.id)",
+            # Entity name indexes
             "CREATE INDEX entity_name IF NOT EXISTS FOR (n:Table) ON (n.name)",
             "CREATE INDEX entity_name IF NOT EXISTS FOR (n:Column) ON (n.name)",
+            # Source file and path indexes for lineage context queries
+            "CREATE INDEX source_file IF NOT EXISTS FOR (n:File) ON (n.source_file)",
+            "CREATE INDEX source_file IF NOT EXISTS FOR (n:DataAsset) ON (n.source_file)",
+            "CREATE INDEX source_file IF NOT EXISTS FOR (n:Column) ON (n.source_file)",
+            "CREATE INDEX source_file IF NOT EXISTS FOR (n:FunctionOrProcedure) ON (n.source_file)",
+            "CREATE INDEX path IF NOT EXISTS FOR (n:File) ON (n.path)",
+            "CREATE INDEX path IF NOT EXISTS FOR (n:DataAsset) ON (n.path)",
         ]
 
         for index_query in indexes:

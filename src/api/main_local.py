@@ -21,13 +21,13 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent))
 from src.ingestion.code_parser import CodeParser
 from src.knowledge_graph.entity_extractor import GraphExtractor
 from src.knowledge_graph.neo4j_client import Neo4jGraphClient
-from src.services import LocalSupervisorAgent, OllamaClient, QdrantLocalClient, MemoryService, set_tracker_broadcast
+from src.services import LocalSupervisorAgent, OllamaClient, QdrantLocalClient, MemoryService, set_tracker_broadcast, LineageInferenceService
 from src.storage.duckdb_client import initialize_duckdb, close_duckdb
 from src.storage.metadata_store import ensure_default_project
 
 from .config import config
 from .middleware import setup_activity_tracking, setup_cors, setup_error_handlers
-from .routers import admin, chat, database, files, github, graph, health, ingest, lineage, metadata, projects
+from .routers import admin, chat, config as config_router, database, files, github, graph, health, ingest, lineage, metadata, projects
 
 
 # ==================== Application State ====================
@@ -46,6 +46,7 @@ class AppState:
     memory: Optional[MemoryService] = None  # Long-term chat memory
     redis_client: Optional[Any] = None  # Redis client for caching
     activity_tracker: Optional[Any] = None  # Activity tracking for metrics
+    inference_service: Optional[LineageInferenceService] = None  # LLM lineage inference
 
 
 state = AppState()
@@ -237,6 +238,15 @@ async def lifespan(app: FastAPI):
         embedding_model=config.EMBEDDING_MODEL,
     )
 
+    # Initialize Lineage Inference Service
+    state.inference_service = LineageInferenceService(
+        ollama_client=state.ollama,
+        neo4j_client=state.graph,
+        qdrant_client=state.qdrant,
+        model_name=config.LLM_MODEL
+    )
+    print("[+] Initialized Lineage Inference Service")
+
     # Create Qdrant collection if needed
     try:
         await state.qdrant.create_collection("code_chunks", vector_size=768)
@@ -306,3 +316,4 @@ app.include_router(database.router)  # Database schema endpoints
 app.include_router(files.router)  # File upload endpoints
 app.include_router(github.router)  # GitHub integration endpoints
 app.include_router(metadata.router)  # Metadata query endpoints
+app.include_router(config_router.router)  # Configuration endpoints

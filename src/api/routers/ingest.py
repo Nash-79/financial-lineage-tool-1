@@ -72,6 +72,7 @@ async def ingest_sql(request: SqlIngestRequest) -> SqlIngestResponse:
             sql_content=request.sql_content,
             dialect=request.dialect,
             source_file=request.source_file,
+            project_id=request.project_id,
         )
         return SqlIngestResponse(
             status="success",

@@ -6,7 +6,14 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from ..models.lineage import LineageQueryRequest, LineageResponse
+from ..models.lineage import (
+    EdgeReviewRequest,
+    EdgeReviewResponse,
+    LineageQueryRequest,
+    LineageResponse,
+    LineageInferenceRequest,
+    LineageInferenceResponse,
+)
 
 if TYPE_CHECKING:
     pass
@@ -148,6 +155,9 @@ async def get_lineage_nodes(
 @router.get("/edges")
 async def get_lineage_edges(
     project_id: Optional[str] = Query(None, description="Filter by project ID"),
+    status: Optional[str] = Query(None, description="Filter by edge status (approved/pending_review/rejected)"),
+    min_confidence: Optional[float] = Query(None, description="Minimum confidence score (0.0-1.0)"),
+    source: Optional[str] = Query(None, description="Filter by edge source (parser/ollama_llm/human)"),
 ) -> Dict[str, Any]:
     """Get lineage edges (relationships) from the knowledge graph.
 
@@ -163,12 +173,26 @@ async def get_lineage_edges(
         raise HTTPException(status_code=503, detail="Graph not initialized")
 
     try:
-        where_stmt = ""
+        where_clauses = []
         params = {}
 
         if project_id:
-            where_stmt = "WHERE source.project_id = $project_id AND target.project_id = $project_id"
+            where_clauses.append("source.project_id = $project_id AND target.project_id = $project_id")
             params["project_id"] = project_id
+        
+        if status:
+            where_clauses.append("r.status = $status")
+            params["status"] = status
+        
+        if min_confidence is not None:
+            where_clauses.append("r.confidence >= $min_confidence")
+            params["min_confidence"] = min_confidence
+        
+        if source:
+            where_clauses.append("r.source = $source")
+            params["source"] = source
+        
+        where_stmt = "WHERE " + " AND ".join(where_clauses) if where_clauses else ""
 
         query = f"""
         MATCH (source)-[r]->(target)
@@ -185,13 +209,19 @@ async def get_lineage_edges(
 
         edges = []
         for record in results:
+            # Extract metadata and rename 'source' to 'edge_source' to avoid
+            # overwriting the node source ID with the relationship provenance
+            meta = dict(record.get("metadata", {}) or {})
+            edge_source = meta.pop("source", None)  # e.g., 'parser', 'ollama_llm', 'human'
+            
             edges.append(
                 {
-                    "id": record.get("metadata", {}).get("id"),  # Edges might not have IDs
-                    "source": record["source"],
-                    "target": record["target"],
+                    "id": meta.get("id"),
+                    "source": record["source"],      # Node ID
+                    "target": record["target"],      # Node ID
                     "type": record["type"],
-                    **record.get("metadata", {}),
+                    "edge_source": edge_source,       # Relationship provenance
+                    **meta,
                 }
             )
 
@@ -237,6 +267,137 @@ async def search_lineage(
         return {"nodes": nodes, "edges": []}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Search failed: {e}")
+
+
+@router.post("/review", response_model=EdgeReviewResponse)
+async def review_edge(request: EdgeReviewRequest) -> EdgeReviewResponse:
+    """Review and approve/reject a lineage edge.
+    
+    Allows manual review of LLM-inferred edges or any edge in the graph.
+    Updates the edge status based on the review action.
+    
+    Args:
+        request: Edge review request with source, target, relationship type, and action
+        
+    Returns:
+        EdgeReviewResponse indicating success/failure and updated edge metadata
+    """
+    state = get_app_state()
+    
+    if not state.graph:
+        raise HTTPException(status_code=503, detail="Graph not initialized")
+    
+    try:
+        # Verify edge exists
+        check_query = """
+        MATCH (source {id: $source_id})-[r]->(target {id: $target_id})
+        WHERE type(r) = $relationship_type
+        RETURN r, properties(r) as props
+        """
+        
+        existing = state.graph._execute_query(check_query, {
+            "source_id": request.source_id,
+            "target_id": request.target_id,
+            "relationship_type": request.relationship_type
+        })
+        
+        if not existing or len(existing) == 0:
+            return EdgeReviewResponse(
+                success=False,
+                message="Edge not found",
+                updated_edge={}
+            )
+        
+        # Update edge status based on action
+        new_status = "approved" if request.action == "approve" else "rejected"
+        
+        update_query = """
+        MATCH (source {id: $source_id})-[r]->(target {id: $target_id})
+        WHERE type(r) = $relationship_type
+        SET r.status = $status,
+            r.reviewed_at = datetime(),
+            r.reviewer_notes = $reviewer_notes
+        RETURN properties(r) as props
+        """
+        
+        state.graph._execute_write(update_query, {
+            "source_id": request.source_id,
+            "target_id": request.target_id,
+            "relationship_type": request.relationship_type,
+            "status": new_status,
+            "reviewer_notes": request.reviewer_notes
+        })
+        
+        return EdgeReviewResponse(
+            success=True,
+            message=f"Edge {request.action}d successfully",
+            updated_edge={
+                "source": request.source_id,
+                "target": request.target_id,
+                "type": request.relationship_type,
+                "status": new_status
+            }
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Review failed: {e}")
+
+
+@router.post("/infer", response_model=LineageInferenceResponse)
+async def infer_lineage(request: LineageInferenceRequest) -> LineageInferenceResponse:
+    """Trigger LLM-based lineage inference for a given scope.
+    
+    Retrieves context (graph + code), asks LLM to propose edges,
+    and returns the proposals. Proposals are auto-ingested as 'pending_review'.
+    
+    Args:
+        request: Inference request with scope and limits.
+        
+    Returns:
+        LineageInferenceResponse with generated proposals.
+    """
+    state = get_app_state()
+    
+    if not state.inference_service:
+        raise HTTPException(status_code=503, detail="Lineage Inference Service not initialized")
+    
+    try:
+        # 1. Retrieve Context
+        context = await state.inference_service.retrieve_context(
+            scope=request.scope,
+            max_nodes=request.max_nodes,
+            max_chunks=request.max_chunks,
+            project_id=request.project_id
+        )
+        
+        node_count = len(context.get("nodes", []))
+        
+        # 2. Propose Edges
+        # Define edge types we are interested in (could be parameterized later)
+        edge_types = ["DEPENDS_ON", "CALLS", "READS_FROM", "WRITES_TO"]
+        
+        proposals = await state.inference_service.propose_edges(
+            context=context,
+            edge_types=edge_types
+        )
+        
+        # 3. Ingest Proposals
+        if proposals:
+            state.inference_service.ingest_proposals(
+                proposals=proposals,
+                default_status="pending_review"
+            )
+            
+        return LineageInferenceResponse(
+            success=True,
+            message=f"Inference complete. Generated {len(proposals)} proposals.",
+            context_nodes_count=node_count,
+            proposals_count=len(proposals),
+            proposals=proposals
+        )
+        
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Inference failed: {e}")
 
 
 @router.get("/node/{node_id}")
